@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+chromadb
+rank-bm25
+jieba
+pymupdf
+opencv-python-headless
+rapidocr_onnxruntime
+python-docx
+sentence-transformers
+openai
+langchain-text-splitters
+langgraph
