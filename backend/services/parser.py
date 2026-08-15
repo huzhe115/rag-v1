@@ -13,7 +13,7 @@ import threading
 from pathlib import Path
 
 import cv2
-import fitz  # PyMuPDF
+import pymupdf as fitz
 import numpy as np
 from docx import Document
 from docx.table import Table

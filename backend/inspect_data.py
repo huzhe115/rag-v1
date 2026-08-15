@@ -9,7 +9,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 STORE_DOCS = Path(__file__).resolve().parent / "store" / "documents"
