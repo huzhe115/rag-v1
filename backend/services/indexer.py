@@ -1,4 +1,5 @@
 """ChromaDB vector store + BM25 keyword index. Singleton, loaded once at startup."""
+import pickle
 import uuid
 import jieba
 import chromadb
@@ -6,7 +7,7 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
-from config import CHROMA_DIR, EMBED_MODEL, BGE_QUERY_PREFIX
+from config import CHROMA_DIR, BM25_CACHE, EMBED_MODEL, BGE_QUERY_PREFIX
 
 
 class IndexerService:
@@ -85,40 +86,72 @@ class IndexerService:
             )
 
         if rebuild_bm25:
-            self.rebuild_bm25()
+            self._append_bm25([f"{doc_id}_p{pi}" for pi in range(len(parent_chunks))],
+                              parent_chunks)
         return len(parent_chunks)
 
     def delete_document(self, doc_id: str):
         self.collection.delete(where={"doc_id": doc_id})
-        self.rebuild_bm25()
+        self._remove_bm25(doc_id)
 
     def load(self):
-        """Rebuild BM25 from existing Chroma data (called on startup)."""
+        """Startup: load BM25 from cache if present, else rebuild from Chroma."""
+        if self._load_bm25_cache():
+            return
         self.rebuild_bm25()
 
     # ---------- internal ----------
 
+    def _rebuild_from_parts(self, ids: list[str], texts: list[str]):
+        """Recompute BM25Okapi statistics from tokenized corpus and persist to cache."""
+        if not ids:
+            self.bm25, self.bm25_ids, self.bm25_texts = None, [], []
+        else:
+            self.bm25 = BM25Okapi(texts)
+            self.bm25_ids = ids
+            self.bm25_texts = texts
+        self._save_bm25_cache()
+
+    def _append_bm25(self, parent_ids: list[str], parent_texts: list[str]):
+        """Incremental add: tokenize only the new parents, keep existing entries."""
+        new_texts = [list(jieba.cut(t)) for t in parent_texts]
+        self._rebuild_from_parts(self.bm25_ids + parent_ids, self.bm25_texts + new_texts)
+
+    def _remove_bm25(self, doc_id: str):
+        """Incremental remove: drop entries of one doc, keep the rest."""
+        keep = [(i, t) for i, t in zip(self.bm25_ids, self.bm25_texts)
+                if not i.startswith(f"{doc_id}_")]
+        self._rebuild_from_parts([i for i, _ in keep], [t for _, t in keep])
+
+    def _save_bm25_cache(self):
+        try:
+            with open(BM25_CACHE, "wb") as f:
+                pickle.dump((self.bm25, self.bm25_ids, self.bm25_texts), f)
+        except Exception:
+            pass  # 缓存写失败不影响服务，下次全量重建
+
+    def _load_bm25_cache(self) -> bool:
+        try:
+            with open(BM25_CACHE, "rb") as f:
+                self.bm25, self.bm25_ids, self.bm25_texts = pickle.load(f)
+            return True
+        except Exception:
+            return False
+
     def rebuild_bm25(self):
-        """Rebuild in-memory BM25 index from all parent chunks in Chroma."""
+        """Full rebuild from Chroma (cache miss / import fallback)."""
         try:
             result = self.collection.get(where={"kind": "parent"})
         except Exception:
-            self.bm25 = None
-            self.bm25_ids = []
-            self.bm25_texts = []
-            return
+            result = None
 
-        if not result["ids"]:
-            self.bm25 = None
-            self.bm25_ids = []
-            self.bm25_texts = []
+        if not result or not result["ids"]:
+            self._rebuild_from_parts([], [])
             return
 
         # jieba tokenize for Chinese BM25
         tokenized = [list(jieba.cut(doc)) for doc in result["documents"]]
-        self.bm25 = BM25Okapi(tokenized)
-        self.bm25_ids = result["ids"]
-        self.bm25_texts = tokenized
+        self._rebuild_from_parts(result["ids"], tokenized)
 
     # ---------- retrieval helpers ----------
 

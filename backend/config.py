@@ -10,6 +10,7 @@ STORE_DIR = BASE_DIR / "store"
 CHROMA_DIR = STORE_DIR / "chroma"
 DOCS_DIR = STORE_DIR / "documents"
 DB_PATH = STORE_DIR / "app.db"
+BM25_CACHE = STORE_DIR / "bm25_cache.pkl"  # BM25 索引持久化缓存，启动直接加载免重建
 
 # LLM
 LLM_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
