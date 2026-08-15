@@ -62,16 +62,26 @@ async def upload(files: list[UploadFile] = File(...)):
         save_path = DOCS_DIR / f"{doc_id}{suffix}"
 
         try:
-            save_path.write_bytes(content)
+            await asyncio.to_thread(save_path.write_bytes, content)
             text, parents = await asyncio.to_thread(_process_file, save_path)
             chunk_count = await asyncio.to_thread(
                 idx.add_document, doc_id, f.filename, parents, rebuild_bm25=False)
-            record = insert_document(doc_id, f.filename, str(save_path),
-                                     len(content), content_hash, chunk_count)
+            record = await asyncio.to_thread(
+                insert_document, doc_id, f.filename, str(save_path),
+                len(content), content_hash, chunk_count)
             results.append({**record, "status": "ok"})
             added = True
         except ValueError as e:
             results.append({"filename": f.filename, "status": "error", "message": str(e)})
+            if save_path.exists():
+                save_path.unlink()
+        except Exception as e:
+            # 半索引态回滚：向量可能已入库但 DB 没记录，删干净不留孤儿
+            results.append({"filename": f.filename, "status": "error", "message": str(e)})
+            try:
+                idx.collection.delete(where={"doc_id": doc_id})
+            except Exception:
+                pass
             if save_path.exists():
                 save_path.unlink()
 

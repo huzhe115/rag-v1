@@ -74,7 +74,9 @@ async def stream_chat(session_id: str, query: str, context: list[dict] | None = 
             add_message(session_id, "assistant", "".join(collected))
         raise
     except Exception as e:
-        yield {"type": "error", "message": f"LLM 调用失败: {str(e)}"}
+        import logging
+        logging.getLogger(__name__).exception("LLM call failed")
+        yield {"type": "error", "message": "LLM 调用失败，请稍后重试"}
         if collected:
             add_message(session_id, "assistant", "".join(collected))
         return

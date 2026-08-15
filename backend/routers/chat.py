@@ -49,6 +49,12 @@ async def _sse_generator(session_id: str, query: str):
 
     except asyncio.CancelledError:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    except Exception as e:
+        # 检索/embedding 等异常也要发 error+done，否则前端永远停在"正在生成"
+        import logging
+        logging.getLogger(__name__).exception("SSE stream failed")
+        yield f"data: {json.dumps({'type': 'error', 'message': '服务内部错误，请稍后重试'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 # ---------- Chat ----------
@@ -57,6 +63,8 @@ async def _sse_generator(session_id: str, query: str):
 async def chat(session_id: str, req: ChatRequest):
     if not req.message.strip():
         raise HTTPException(400, "消息不能为空")
+    if len(req.message) > 4000:
+        raise HTTPException(400, "消息过长（上限 4000 字符）")
     if not get_session(session_id):
         raise HTTPException(404, "会话不存在")
 

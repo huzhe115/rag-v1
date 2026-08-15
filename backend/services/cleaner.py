@@ -22,7 +22,7 @@ _SENT_ENDINGS = "。；：，！？"  # 以句末标点结尾的行视为正文�
 _GARBAGE_MAX_RATIO = 0.3  # 段内异常字符占比上限，超则删段
 _GARBAGE_DOC_RATIO = 0.5  # 全篇异常占比超此值 → 整篇乱码报错
 _ILLEGAL_CHARS = re.compile(
-    r"[^一-鿿　-〿＀-￯\x20-\x7e\n]"
+    r"[^一-鿿　-〿＀-￯\x20-\x7e\n\t]"
 )
 
 

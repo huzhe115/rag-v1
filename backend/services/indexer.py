@@ -8,6 +8,7 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
 from config import CHROMA_DIR, BM25_CACHE, EMBED_MODEL, BGE_QUERY_PREFIX
+from services import NN_LOCK
 
 
 class IndexerService:
@@ -73,9 +74,10 @@ class IndexerService:
 
         # batch embed all docs at once
         if all_docs:
-            all_embeddings = self.embed_model.encode(
-                all_docs, normalize_embeddings=True, show_progress_bar=False
-            ).tolist()
+            with NN_LOCK:  # GPU 推理串行，防并发 OOM
+                all_embeddings = self.embed_model.encode(
+                    all_docs, normalize_embeddings=True, show_progress_bar=False
+                ).tolist()
 
         if all_ids:
             self.collection.add(
@@ -104,13 +106,14 @@ class IndexerService:
 
     def _rebuild_from_parts(self, ids: list[str], texts: list[str]):
         """Recompute BM25Okapi statistics from tokenized corpus and persist to cache."""
-        if not ids:
-            self.bm25, self.bm25_ids, self.bm25_texts = None, [], []
-        else:
-            self.bm25 = BM25Okapi(texts)
-            self.bm25_ids = ids
-            self.bm25_texts = texts
-        self._save_bm25_cache()
+        with NN_LOCK:  # 三段状态原子替换，防检索读到撕裂状态
+            if not ids:
+                self.bm25, self.bm25_ids, self.bm25_texts = None, [], []
+            else:
+                self.bm25 = BM25Okapi(texts)
+                self.bm25_ids = ids
+                self.bm25_texts = texts
+            self._save_bm25_cache()
 
     def _append_bm25(self, parent_ids: list[str], parent_texts: list[str]):
         """Incremental add: tokenize only the new parents, keep existing entries."""
@@ -156,9 +159,10 @@ class IndexerService:
     # ---------- retrieval helpers ----------
 
     def embed_query(self, query: str) -> list[float]:
-        return self.embed_model.encode(
-            BGE_QUERY_PREFIX + query, normalize_embeddings=True
-        ).tolist()
+        with NN_LOCK:
+            return self.embed_model.encode(
+                BGE_QUERY_PREFIX + query, normalize_embeddings=True
+            ).tolist()
 
     def vector_search(self, qvec: list[float], k: int) -> list[str]:
         """Return parent IDs from vector search over children, deduped."""
@@ -178,13 +182,14 @@ class IndexerService:
 
     def bm25_search(self, query: str, k: int) -> list[str]:
         """Return parent IDs from BM25 search."""
-        if self.bm25 is None:
-            return []
-        tokens = list(jieba.cut(query))
-        scores = self.bm25.get_scores(tokens)
-        # get top-k indices
-        ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:k]
-        return [self.bm25_ids[i] for i, _ in ranked if scores[i] > 0]
+        with NN_LOCK:  # 读侧同锁，防与重建交错
+            if self.bm25 is None:
+                return []
+            tokens = list(jieba.cut(query))
+            scores = self.bm25.get_scores(tokens)
+            # get top-k indices
+            ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:k]
+            return [self.bm25_ids[i] for i, _ in ranked if scores[i] > 0]
 
     def get_parents(self, parent_ids: list[str]) -> list[dict]:
         """Fetch parent docs by IDs. Returns [{id, text, filename}, ...] in order."""
