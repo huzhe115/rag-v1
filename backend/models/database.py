@@ -144,6 +144,16 @@ def get_document_by_hash(content_hash: str) -> dict | None:
     return dict(r) if r else None
 
 
+def get_document(doc_id: str) -> dict | None:
+    with _conn() as db:
+        r = db.execute(
+            "SELECT id, filename, path, size, content_hash, chunk_count, created_at "
+            "FROM documents WHERE id=?",
+            (doc_id,),
+        ).fetchone()
+    return dict(r) if r else None
+
+
 def list_documents() -> list[dict]:
     with _conn() as db:
         rows = db.execute(

@@ -1,10 +1,12 @@
 """Document upload / list / delete router."""
+import asyncio
 import hashlib
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from config import DOCS_DIR, MAX_UPLOAD_MB
-from models.database import insert_document, list_documents, delete_document, get_document_by_hash
+from models.database import (insert_document, list_documents, delete_document,
+                             get_document, get_document_by_hash)
 from services.parser import parse_file
 from services.cleaner import clean_text
 from services.chunker import split_parents
@@ -13,6 +15,12 @@ from services.indexer import IndexerService
 router = APIRouter()
 
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
+def _process_file(save_path: Path) -> tuple[str, list[str]]:
+    """Parse + clean + chunk in a worker thread (CPU-heavy, keep out of event loop)."""
+    text = clean_text(parse_file(save_path))
+    return text, split_parents(text)
 
 
 @router.post("/upload")
@@ -55,9 +63,9 @@ async def upload(files: list[UploadFile] = File(...)):
 
         try:
             save_path.write_bytes(content)
-            text = clean_text(parse_file(save_path))
-            parents = split_parents(text)
-            chunk_count = idx.add_document(doc_id, f.filename, parents, rebuild_bm25=False)
+            text, parents = await asyncio.to_thread(_process_file, save_path)
+            chunk_count = await asyncio.to_thread(
+                idx.add_document, doc_id, f.filename, parents, rebuild_bm25=False)
             record = insert_document(doc_id, f.filename, str(save_path),
                                      len(content), content_hash, chunk_count)
             results.append({**record, "status": "ok"})
@@ -68,7 +76,7 @@ async def upload(files: list[UploadFile] = File(...)):
                 save_path.unlink()
 
     if added:
-        idx.rebuild_bm25()  # 批量上传只重建一次
+        await asyncio.to_thread(idx.rebuild_bm25)  # 批量上传只重建一次
     return results
 
 
@@ -79,8 +87,13 @@ def list_docs():
 
 @router.delete("/documents/{doc_id}")
 def delete_doc(doc_id: str):
-    idx = IndexerService.get_instance()
-    idx.delete_document(doc_id)
-    if not delete_document(doc_id):
+    record = get_document(doc_id)
+    if not record:
         raise HTTPException(404, "文档不存在")
+    IndexerService.get_instance().delete_document(doc_id)
+    delete_document(doc_id)
+    try:
+        Path(record["path"]).unlink(missing_ok=True)
+    except OSError:
+        pass  # 文件已不在或无法删除不影响接口结果
     return {"ok": True}
