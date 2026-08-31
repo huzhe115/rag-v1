@@ -23,6 +23,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL DEFAULT '新对话',
+                summary TEXT NOT NULL DEFAULT '',
+                summary_upto INTEGER NOT NULL DEFAULT 0,  -- 折叠标记：≤此 id 的消息已进摘要
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -32,6 +34,15 @@ def init_db():
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS traces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                question TEXT NOT NULL,
+                steps TEXT NOT NULL,  -- JSON: [{step, detail, ms}, ...]
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
@@ -46,6 +57,15 @@ def init_db():
                 created_at TEXT NOT NULL
             );
         """)
+        # 旧库升级：sessions 补列（CREATE IF NOT EXISTS 不会改已有表）
+        try:
+            db.execute("ALTER TABLE sessions ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+        try:
+            db.execute("ALTER TABLE sessions ADD COLUMN summary_upto INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
 
 
 # --- Sessions ---
@@ -72,18 +92,25 @@ def list_sessions() -> list[dict]:
 def get_session(sid: str) -> dict | None:
     with _conn() as db:
         r = db.execute(
-            "SELECT id, title, created_at, updated_at FROM sessions WHERE id=?", (sid,)
+            "SELECT id, title, summary, summary_upto, created_at, updated_at "
+            "FROM sessions WHERE id=?", (sid,)
         ).fetchone()
     return dict(r) if r else None
 
 
-def update_session(sid: str, *, title: str | None = None):
+def update_session(sid: str, *, title: str | None = None, summary: str | None = None,
+                   summary_upto: int | None = None):
     now = _utcnow()
     with _conn() as db:
         if title:
             db.execute(
                 "UPDATE sessions SET title=?, updated_at=? WHERE id=?",
                 (title, now, sid),
+            )
+        elif summary is not None:
+            db.execute(
+                "UPDATE sessions SET summary=?, summary_upto=?, updated_at=? WHERE id=?",
+                (summary, summary_upto or 0, now, sid),
             )
         else:
             db.execute(
@@ -109,14 +136,45 @@ def add_message(sid: str, role: str, content: str) -> int:
         return cur.lastrowid
 
 
-def get_messages(sid: str, limit: int = 50) -> list[dict]:
+def get_messages(sid: str, limit: int | None = None) -> list[dict]:
+    sql = ("SELECT id, session_id, role, content, created_at FROM messages "
+           "WHERE session_id=? ORDER BY id ASC")
+    params: list = [sid]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    with _conn() as db:
+        rows = db.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Traces（推理轨迹：检索决策/工具调用，对应计划"记录每一步 reasoning 摘要"） ---
+
+def add_trace(sid: str, question: str, steps: list[dict]) -> int:
+    import json
+    now = _utcnow()
+    with _conn() as db:
+        cur = db.execute(
+            "INSERT INTO traces (session_id, question, steps, created_at) VALUES (?,?,?,?)",
+            (sid, question, json.dumps(steps, ensure_ascii=False), now),
+        )
+        return cur.lastrowid
+
+
+def get_traces(sid: str, limit: int = 10) -> list[dict]:
+    import json
     with _conn() as db:
         rows = db.execute(
-            "SELECT id, session_id, role, content, created_at FROM messages "
-            "WHERE session_id=? ORDER BY id ASC LIMIT ?",
+            "SELECT id, session_id, question, steps, created_at FROM traces "
+            "WHERE session_id=? ORDER BY id DESC LIMIT ?",
             (sid, limit),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["steps"] = json.loads(d["steps"])
+        out.append(d)
+    return out
 
 
 # --- Documents ---

@@ -13,3 +13,4 @@ sentence-transformers
 openai
 langchain-text-splitters
 langgraph
+tavily-python

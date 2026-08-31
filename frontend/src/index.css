@@ -182,6 +182,31 @@ tr:last-child td { border-bottom: none; }
   background: var(--bg); border-radius: 4px; padding: 3px 8px;
   font-size: 12px; color: var(--text-secondary); white-space: nowrap;
 }
+.source-web { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+.web-tag {
+  font-style: normal; background: #fef3c7; color: #b45309;
+  border-radius: 3px; padding: 1px 5px; margin-left: 5px; font-size: 11px;
+}
+
+/* ---- Message Time ---- */
+.msg-time { margin-top: 6px; font-size: 11px; color: var(--text-secondary); opacity: 0.7; }
+.msg-user .msg-time { text-align: right; color: #e0e0e0; }
+
+/* ---- Trace Panel ---- */
+.trace-panel {
+  margin: 0 24px 16px; padding: 10px 14px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 13px;
+}
+.trace-panel summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+.trace-steps { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.trace-step { display: flex; gap: 10px; line-height: 1.5; }
+.trace-step-name {
+  flex-shrink: 0; width: 64px; text-align: center;
+  background: var(--bg); border-radius: 4px; padding: 1px 4px;
+  font-size: 12px; color: var(--accent); font-weight: 500;
+}
+.trace-step-detail { color: var(--text-secondary); word-break: break-all; }
 
 /* ---- Input Bar ---- */
 .chat-input-bar {

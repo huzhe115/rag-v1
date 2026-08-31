@@ -3,9 +3,9 @@ import Sidebar from "../components/Sidebar";
 import ChatMessage from "../components/ChatMessage";
 import {
   getSessions, createSession, deleteSession, getMessages,
-  streamChat,
+  streamChat, getTraces,
 } from "../api";
-import type { Session, Message, Source } from "../types";
+import type { Session, Message, Source, Trace } from "../types";
 
 const SUGGESTIONS = ["这个知识库主要讲了什么？", "帮我总结一下文档内容", "有哪些核心概念？"];
 
@@ -15,6 +15,7 @@ export default function ChatPage() {
     () => localStorage.getItem("rag_active_session")
   );
   const [messages, setMessages] = useState<Message[]>([]);
+  const [traces, setTraces] = useState<Trace[]>([]);
   const [pendingSources, setPendingSources] = useState<Source[] | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [input, setInput] = useState("");
@@ -31,6 +32,7 @@ export default function ChatPage() {
     setActiveId(s.id);
     localStorage.setItem("rag_active_session", s.id);
     setPendingSources(null);
+    setTraces([]);
     abortRef.current?.abort();
     setStreaming(false);
   }, []);
@@ -91,12 +93,14 @@ export default function ChatPage() {
     setPendingSources(null);
 
     const userMsg: Message = {
-      id: Date.now(), session_id: activeId, role: "user", content: msg, created_at: "",
+      id: Date.now(), session_id: activeId, role: "user", content: msg,
+      created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMsg]);
 
     const assistantMsg: Message = {
-      id: Date.now() + 1, session_id: activeId, role: "assistant", content: "", created_at: "",
+      id: Date.now() + 1, session_id: activeId, role: "assistant", content: "",
+      created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, assistantMsg]);
     setStreaming(true);
@@ -115,6 +119,7 @@ export default function ChatPage() {
         setStreaming(false);
         abortRef.current = null;
         loadSessions();
+        getTraces(activeId).then(setTraces).catch(() => setTraces([]));
       },
       onError: (msg) => {
         setToast(msg);
@@ -177,6 +182,19 @@ export default function ChatPage() {
               />
             ))}
             <div ref={bottomRef} />
+            {traces.length > 0 && (
+              <details className="trace-panel">
+                <summary>🔍 查看最近一次检索过程</summary>
+                <div className="trace-steps">
+                  {traces[0].steps.map((st, i) => (
+                    <div key={i} className="trace-step">
+                      <span className="trace-step-name">{st.step}</span>
+                      <span className="trace-step-detail">{st.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         )}
 

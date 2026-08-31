@@ -1,4 +1,4 @@
-import type { Session, DocRecord, Message, UploadResult, StreamEvent } from "../types";
+import type { Session, DocRecord, Message, UploadResult, StreamEvent, Trace } from "../types";
 
 const BASE = "/api";
 
@@ -38,6 +38,11 @@ export async function deleteSession(id: string): Promise<void> {
 
 export async function getMessages(sessionId: string): Promise<Message[]> {
   const res = await fetch(`${BASE}/sessions/${sessionId}/messages`);
+  return res.json();
+}
+
+export async function getTraces(sessionId: string): Promise<Trace[]> {
+  const res = await fetch(`${BASE}/sessions/${sessionId}/traces`);
   return res.json();
 }
 

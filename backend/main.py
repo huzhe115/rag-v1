@@ -1,8 +1,8 @@
 """RAG-v1 FastAPI application."""
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pathlib import Path
 
 
@@ -34,7 +34,15 @@ def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
-# Serve frontend in production
+# Serve frontend in production (SPA fallback：未知路径回退 index.html，刷新 /chat 不再 404)
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        if full_path.startswith("api"):
+            raise HTTPException(404, "Not Found")
+        candidate = frontend_dist / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)  # dist 里的静态资源
+        return FileResponse(frontend_dist / "index.html")  # SPA 路由 → 回退首页

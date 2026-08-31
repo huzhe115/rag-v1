@@ -25,6 +25,20 @@ export interface Source {
   index: number;
   filename: string;
   snippet: string;
+  source_type?: "local" | "web";
+  url?: string;
+}
+
+export interface TraceStep {
+  step: string;
+  detail: string;
+}
+
+export interface Trace {
+  id: number;
+  question: string;
+  steps: TraceStep[];
+  created_at: string;
 }
 
 export type StreamEvent =

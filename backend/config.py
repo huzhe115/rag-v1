@@ -38,6 +38,16 @@ RRF_K = 60
 RERANK_TOP_N = 5
 HISTORY_TURNS = 3  # how many recent message pairs go into the prompt
 
+# Context window & compaction（借鉴 Claude Code auto-compact：总上下文超窗口 65% 触发）
+CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "64000"))  # deepseek-chat 上下文窗口
+COMPACT_THRESHOLD_PCT = float(os.getenv("COMPACT_THRESHOLD_PCT", "65"))
+SUMMARY_MAX_TOKENS = 800  # 压缩摘要长度上限
+
+# Web search fallback (Tavily) — 本地检索耗尽时的联网兜底
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")  # 不填则禁用联网兜底
+TAVILY_MAX_RESULTS = int(os.getenv("TAVILY_MAX_RESULTS", "3"))
+TAVILY_SCORE_THRESHOLD = float(os.getenv("TAVILY_SCORE_THRESHOLD", "0.5"))  # 低于此相关分的结果丢弃
+
 # Upload limits
 MAX_UPLOAD_MB = 50
 

@@ -1,11 +1,13 @@
 """Chat SSE streaming + session CRUD. Uses LangGraph for retrieval loop."""
 import json
 import asyncio
+import time
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from models.database import (
-    create_session, list_sessions, get_session, delete_session, get_messages
+    create_session, list_sessions, get_session, delete_session, get_messages,
+    add_trace, get_traces,
 )
 from services.graph import get_rag_graph
 from services.llm import stream_chat
@@ -20,9 +22,13 @@ class ChatRequest(BaseModel):
 # ---------- SSE generators ----------
 
 async def _sse_generator(session_id: str, query: str):
-    """Run LangGraph retrieval loop → stream DeepSeek response."""
+    """Run LangGraph retrieval loop → stream DeepSeek response → persist trace."""
+    t0 = time.time()
+    tool_log: list[dict] = []
+    graph_state: dict = {}
+    context: list[dict] = []
     try:
-        # Phase 1: LangGraph retrieval with self-reflection
+        # Phase 1: LangGraph retrieval（带历史指代消解 + 检索分级，逐步记录决策）
         graph = get_rag_graph()
         graph_state = await asyncio.to_thread(
             graph.invoke,
@@ -32,6 +38,9 @@ async def _sse_generator(session_id: str, query: str):
                 "context": [],
                 "retry_count": 0,
                 "is_sufficient": False,
+                "history": get_messages(session_id),
+                "steps": [],
+                "need_retrieval": True,
             },
         )
 
@@ -43,8 +52,8 @@ async def _sse_generator(session_id: str, query: str):
                 f"Query rewritten {retries} time(s): '{query}' → '{graph_state.get('question', query)}'"
             )
 
-        # Phase 2: Stream LLM generation with retrieved context
-        async for event in stream_chat(session_id, query, context):
+        # Phase 2: Stream LLM generation with retrieved context（工具调用记录进 tool_log）
+        async for event in stream_chat(session_id, query, context, tool_log=tool_log):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     except asyncio.CancelledError:
@@ -55,6 +64,19 @@ async def _sse_generator(session_id: str, query: str):
         logging.getLogger(__name__).exception("SSE stream failed")
         yield f"data: {json.dumps({'type': 'error', 'message': '服务内部错误，请稍后重试'}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    finally:
+        # Phase 3: 持久化推理轨迹（检索决策 + 工具调用 + 总耗时）
+        steps = list(graph_state.get("steps", []))
+        steps.append({
+            "step": "生成",
+            "detail": f"引用来源 {len(context)} 条，耗时 {time.time() - t0:.1f}s",
+        })
+        steps.extend(tool_log)
+        try:
+            add_trace(session_id, query, steps)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("trace persist failed")
 
 
 # ---------- Chat ----------
@@ -96,3 +118,11 @@ def delete_session_route(session_id: str):
 @router.get("/sessions/{session_id}/messages")
 def get_session_messages(session_id: str):
     return get_messages(session_id)
+
+
+@router.get("/sessions/{session_id}/traces")
+def get_session_traces(session_id: str):
+    """推理轨迹：每轮提问的检索决策、工具调用与耗时。"""
+    if not get_session(session_id):
+        raise HTTPException(404, "会话不存在")
+    return get_traces(session_id)
